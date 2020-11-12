@@ -1,10 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
-	"github.com/gavrilaf/oauth-test/pkg/log"
+	"github.com/gavrilaf/oauth-test/pkg/httpx"
 	"io/ioutil"
 	"net/http"
+
+	"github.com/gavrilaf/oauth-test/pkg/log"
+
 )
 
 func main() {
@@ -20,5 +24,10 @@ func main() {
 		log.L.WithError(err).Fatal("failed to read auth body")
 	}
 
-	fmt.Println(string(body))
+	var token httpx.Token
+	if err := json.Unmarshal(body, &token); err != nil {
+		log.L.WithError(err).Fatal("failed to unmarshal token")
+	}
+
+	fmt.Println(token)
 }

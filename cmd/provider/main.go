@@ -9,12 +9,12 @@ import (
 	"github.com/labstack/echo/middleware"
 
 	"github.com/gavrilaf/oauth-test/pkg/log"
+	"github.com/gavrilaf/oauth-test/pkg/httpx"
 )
 
-type Token struct {
-	Expire int    `json:"expire"`
-	Token  string `json:"token"`
-}
+const (
+	tokenLifetime = 30
+)
 
 func main() {
 	log.InitLog()
@@ -28,8 +28,9 @@ func main() {
 	signingKey := []byte("secret-key")
 
 	e.GET("/auth", func(c echo.Context) error {
+
 		claims := &jwt.StandardClaims{
-			ExpiresAt: time.Now().Add(time.Second * 30).Unix(),
+			ExpiresAt: time.Now().Add(time.Second * tokenLifetime).Unix(),
 			Issuer:    "provider",
 		}
 
@@ -39,8 +40,8 @@ func main() {
 			return echo.NewHTTPError(http.StatusConflict, err.Error())
 		}
 
-		token := Token{
-			Expire: 300,
+		token := httpx.Token{
+			Expire: tokenLifetime,
 			Token:  ss,
 		}
 
