@@ -13,28 +13,34 @@ type TokenStorage interface {
 	GetToken() (string, error)
 }
 
-func MakeTokenStorage() TokenStorage {
+func MakeTokenStorage(authUrl string) TokenStorage {
 	return &tokenStorage{
-		lock: &sync.RWMutex{},
+		authUrl: authUrl,
+		client:  http.DefaultClient,
+		lock:    &sync.RWMutex{},
 	}
 }
 
 type tokenStorage struct {
 	authUrl  string
-	client   http.Client
+	client   *http.Client
 	lock     *sync.RWMutex
 	token    string
 	expireAt time.Time
-	lifetime float64
+	lifetime time.Duration
 }
 
 func (s *tokenStorage) GetToken() (string, error) {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
 
-	if s.isTokenValid() {
+	token, valid := func() (string, bool) {
+		s.lock.RLock()
+		defer s.lock.RUnlock()
+		return s.token, s.isTokenValid()
+	}()
+
+	if valid {
 		fmt.Println("token is valid, use it")
-		return s.token, nil
+		return token, nil
 	}
 
 	fmt.Println("refresh token")
@@ -62,23 +68,22 @@ func (s *tokenStorage) refreshToken() error {
 	}
 
 	s.token = token.Token
-	s.lifetime = float64(token.Expire)
+	s.lifetime = time.Duration(token.Expire)
 	s.expireAt = time.Now().Add(time.Duration(token.Expire) * time.Second)
 
 	return nil
 }
 
 func (s *tokenStorage) isTokenValid() bool {
-	if s.token == "" {
+	return s.token != "" && !s.expired()
+}
+
+func (s *tokenStorage) expired() bool {
+	if s.expireAt.IsZero() {
 		return false
 	}
 
-	tm := time.Now()
-	if tm.Sub(s.expireAt).Seconds() > s.lifetime {
-		return false
-	}
-
-	return true
+	return s.expireAt.Add(-s.lifetime).Before(TimeNow())
 }
 
 func (s *tokenStorage) readToken() (Token, error) {
