@@ -9,19 +9,19 @@ import (
 	"time"
 )
 
-type TokenStorage interface {
+type TokenProvider interface {
 	GetToken() (string, error)
 }
 
-func MakeTokenStorage(authUrl string) TokenStorage {
-	return &tokenStorage{
+func MakeTokenProvider(authUrl string) TokenProvider {
+	return &tokenProvider{
 		authUrl: authUrl,
 		client:  http.DefaultClient,
 		lock:    &sync.RWMutex{},
 	}
 }
 
-type tokenStorage struct {
+type tokenProvider struct {
 	authUrl  string
 	client   *http.Client
 	lock     *sync.RWMutex
@@ -30,7 +30,7 @@ type tokenStorage struct {
 	lifetime time.Duration
 }
 
-func (s *tokenStorage) GetToken() (string, error) {
+func (s *tokenProvider) GetToken() (string, error) {
 
 	token, valid := func() (string, bool) {
 		s.lock.RLock()
@@ -54,7 +54,7 @@ func (s *tokenStorage) GetToken() (string, error) {
 	return s.token, nil
 }
 
-func (s *tokenStorage) refreshToken() error {
+func (s *tokenProvider) refreshToken() error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
@@ -74,11 +74,11 @@ func (s *tokenStorage) refreshToken() error {
 	return nil
 }
 
-func (s *tokenStorage) isTokenValid() bool {
+func (s *tokenProvider) isTokenValid() bool {
 	return s.token != "" && !s.expired()
 }
 
-func (s *tokenStorage) expired() bool {
+func (s *tokenProvider) expired() bool {
 	if s.expireAt.IsZero() {
 		return false
 	}
@@ -86,11 +86,12 @@ func (s *tokenStorage) expired() bool {
 	return s.expireAt.Add(-s.lifetime).Before(TimeNow())
 }
 
-func (s *tokenStorage) readToken() (Token, error) {
+func (s *tokenProvider) readToken() (Token, error) {
 	resp, err := s.client.Get(s.authUrl)
 	if err != nil {
 		return Token{}, fmt.Errorf("token request error, %w", err)
 	}
+	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {

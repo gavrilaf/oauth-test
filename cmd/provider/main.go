@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	tokenLifetime = 30
+	tokenLifetime = 10
 )
 
 func main() {
