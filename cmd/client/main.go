@@ -1,14 +1,19 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gavrilaf/oauth-test/pkg/httpx"
 )
 
-func run(id int, provider httpx.TokenProvider) {
+func run(ctx context.Context, id int, provider httpx.TokenProvider) {
 	doer := httpx.MakeAuthDoer(http.DefaultClient, provider)
 
 	for {
@@ -22,20 +27,44 @@ func run(id int, provider httpx.TokenProvider) {
 			fmt.Printf("%d failed\n", id)
 		} else {
 			fmt.Printf("%d success\n", id)
+			resp.Body.Close()
 		}
 
-		resp.Body.Close()
-
-		time.Sleep(time.Second)
+		select {
+		case <- ctx.Done():
+			fmt.Printf("worker %d done\n", id)
+			return
+		case <- time.After(time.Second):
+			break
+		}
 	}
 }
+
+const workers = 3
 
 func main() {
 	provider := httpx.MakeTokenProvider("http://127.0.0.1:7575/auth")
 
-	go run(1, provider)
-	go run(2, provider)
-	go run(3, provider)
+	ctx, cancelFn := context.WithCancel(context.Background())
 
-	for {}
+	wg := sync.WaitGroup{}
+
+	for i := 1; i <= workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			run(ctx,i, provider)
+			wg.Done()
+		}(i)
+	}
+
+	go func() {
+		c := make(chan os.Signal)
+		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+		<-c
+
+		cancelFn()
+	}()
+
+	wg.Wait()
+	fmt.Println("all workers done")
 }
