@@ -7,7 +7,7 @@ import (
 
 const (
 	authKey = "Authorization"
-	prefix = "Bearer "
+	prefix  = "Bearer "
 
 	retryCount = 1
 )
@@ -17,7 +17,7 @@ type Doer interface {
 }
 
 type authDoer struct {
-	parent Doer
+	parent        Doer
 	tokenProvider TokenProvider
 }
 
@@ -34,7 +34,7 @@ func (d *authDoer) Do(req *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("token provider failed, %w", err)
 	}
 
-	req.Header.Set(authKey, prefix + token)
+	req.Header.Set(authKey, prefix+token)
 
 	var doWithRetry func(attempt int) (*http.Response, error)
 	doWithRetry = func(attempt int) (*http.Response, error) {
@@ -49,6 +49,7 @@ func (d *authDoer) Do(req *http.Request) (*http.Response, error) {
 		}
 
 		if shouldRetry && attempt < retryCount {
+			//d.tokenProvider.
 			return doWithRetry(attempt + 1)
 		}
 

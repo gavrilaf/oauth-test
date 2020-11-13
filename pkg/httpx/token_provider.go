@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	backoff "github.com/cenkalti/backoff/v4"
+	"github.com/cenkalti/backoff/v4"
 )
 
 type TokenProvider interface {
@@ -51,6 +51,10 @@ func (s *tokenProvider) GetToken() (string, error) {
 	return s.token, nil
 }
 
+func (s *tokenProvider) ForceRefresh() {
+	s.refreshToken()
+}
+
 var retryLogic = backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3)
 
 func (s *tokenProvider) refreshToken() error {
@@ -79,11 +83,14 @@ func (s *tokenProvider) refreshToken() error {
 
 	err := backoff.Retry(update, retryLogic)
 	if err != nil {
+		s.token = ""
+		s.lifetime = 0
+		s.expireAt = time.Time{}
+
 		return fmt.Errorf("failed to refresh token, %w", err)
 	}
 
 	fmt.Println("token refreshed")
-
 	return nil
 }
 
