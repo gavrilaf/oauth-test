@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	backoff "github.com/cenkalti/backoff/v4"
 )
 
 type TokenProvider interface {
@@ -31,7 +33,6 @@ type tokenProvider struct {
 }
 
 func (s *tokenProvider) GetToken() (string, error) {
-
 	token, valid := func() (string, bool) {
 		s.lock.RLock()
 		defer s.lock.RUnlock()
@@ -39,37 +40,49 @@ func (s *tokenProvider) GetToken() (string, error) {
 	}()
 
 	if valid {
-		fmt.Println("token is valid, use it")
 		return token, nil
 	}
 
-	fmt.Println("refresh token")
+	fmt.Println("token invalid or expired")
 	if err := s.refreshToken(); err != nil {
-		fmt.Printf("failed to refresh token, %v", err)
 		return "", err
 	}
 
-	fmt.Println("token refreshed")
-
 	return s.token, nil
 }
+
+var retryLogic = backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3)
 
 func (s *tokenProvider) refreshToken() error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	if s.isTokenValid() { // update in another goroutine
+	fmt.Println("refreshing token")
+	if s.isTokenValid() { // updated in another goroutine
+		fmt.Println("already refreshed")
 		return nil
 	}
 
-	token, err := s.readToken()
+	update := func() error {
+		token, err := s.readToken()
+		if err != nil {
+			fmt.Printf("read token error: %v\n", err)
+			return err
+		}
+
+		s.token = token.Token
+		s.lifetime = time.Duration(token.Expire)
+		s.expireAt = time.Now().Add(time.Duration(token.Expire) * time.Second)
+
+		return nil
+	}
+
+	err := backoff.Retry(update, retryLogic)
 	if err != nil {
 		return fmt.Errorf("failed to refresh token, %w", err)
 	}
 
-	s.token = token.Token
-	s.lifetime = time.Duration(token.Expire)
-	s.expireAt = time.Now().Add(time.Duration(token.Expire) * time.Second)
+	fmt.Println("token refreshed")
 
 	return nil
 }

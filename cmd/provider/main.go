@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math/rand"
 	"net/http"
 	"time"
 
@@ -8,13 +9,23 @@ import (
 	"github.com/labstack/echo"
 	"github.com/labstack/echo/middleware"
 
-	"github.com/gavrilaf/oauth-test/pkg/log"
 	"github.com/gavrilaf/oauth-test/pkg/httpx"
+	"github.com/gavrilaf/oauth-test/pkg/log"
 )
 
 const (
 	tokenLifetime = 10
+
+	authErrorRate = 0.2
+	doErrorRate   = 0.2
 )
+
+func bernoulliTryFail(rate float64) bool {
+	if rand.Float64() < rate {
+		return true
+	}
+	return false
+}
 
 func main() {
 	log.InitLog()
@@ -25,9 +36,14 @@ func main() {
 
 	e.Debug = true
 
+	rand.Seed(time.Now().UnixNano())
+
 	signingKey := []byte("secret-key")
 
 	e.GET("/auth", func(c echo.Context) error {
+		if bernoulliTryFail(authErrorRate) {
+			return c.NoContent(500)
+		}
 
 		claims := &jwt.StandardClaims{
 			ExpiresAt: time.Now().Add(time.Second * tokenLifetime).Unix(),
@@ -49,11 +65,15 @@ func main() {
 	})
 
 	jwtConfig := middleware.JWTConfig{
-		SigningKey:    signingKey,
+		SigningKey: signingKey,
 	}
 
 	handler := func(c echo.Context) error {
-		return c.JSON(200, map[string]string{"result": "sucess"})
+		if bernoulliTryFail(doErrorRate) {
+			return c.NoContent(401)
+		}
+
+		return c.JSON(200, map[string]string{"result": "success"})
 	}
 
 	e.GET("/do", handler, middleware.JWTWithConfig(jwtConfig))

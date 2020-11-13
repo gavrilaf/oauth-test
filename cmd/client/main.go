@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,7 +14,7 @@ import (
 	"github.com/gavrilaf/oauth-test/pkg/httpx"
 )
 
-func run(ctx context.Context, id int, provider httpx.TokenProvider) {
+func run(ctx context.Context, id int, timeout time.Duration, provider httpx.TokenProvider) {
 	doer := httpx.MakeAuthDoer(http.DefaultClient, provider)
 
 	for {
@@ -26,7 +27,7 @@ func run(ctx context.Context, id int, provider httpx.TokenProvider) {
 		if err != nil {
 			fmt.Printf("%d failed\n", id)
 		} else {
-			fmt.Printf("%d success\n", id)
+			//fmt.Printf("%d success\n", id)
 			resp.Body.Close()
 		}
 
@@ -34,13 +35,13 @@ func run(ctx context.Context, id int, provider httpx.TokenProvider) {
 		case <- ctx.Done():
 			fmt.Printf("worker %d done\n", id)
 			return
-		case <- time.After(time.Second):
+		case <- time.After(timeout):
 			break
 		}
 	}
 }
 
-const workers = 3
+const workers = 5
 
 func main() {
 	provider := httpx.MakeTokenProvider("http://127.0.0.1:7575/auth")
@@ -49,10 +50,13 @@ func main() {
 
 	wg := sync.WaitGroup{}
 
+	rand.Seed(time.Now().UnixNano())
+
 	for i := 1; i <= workers; i++ {
 		wg.Add(1)
+		timeout := time.Duration(rand.Intn(500)) * time.Millisecond + 100 * time.Millisecond
 		go func(i int) {
-			run(ctx,i, provider)
+			run(ctx, i, timeout, provider)
 			wg.Done()
 		}(i)
 	}
