@@ -13,6 +13,8 @@ import (
 
 type TokenProvider interface {
 	GetToken() (string, error)
+	IsTokenValid() bool
+	ForceRefresh() error
 }
 
 func MakeTokenProvider(authUrl string) TokenProvider {
@@ -51,8 +53,14 @@ func (s *tokenProvider) GetToken() (string, error) {
 	return s.token, nil
 }
 
-func (s *tokenProvider) ForceRefresh() {
-	s.refreshToken()
+func (s *tokenProvider) IsTokenValid() bool {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+	return s.isTokenValid()
+}
+
+func (s *tokenProvider) ForceRefresh() error {
+	return s.refreshToken()
 }
 
 var retryLogic = backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3)
@@ -76,7 +84,7 @@ func (s *tokenProvider) refreshToken() error {
 
 		s.token = token.Token
 		s.lifetime = time.Duration(token.Expire)
-		s.expireAt = time.Now().Add(time.Duration(token.Expire) * time.Second)
+		s.expireAt = TimeNow().Add(time.Duration(token.Expire) * time.Second)
 
 		return nil
 	}
