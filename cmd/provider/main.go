@@ -16,15 +16,12 @@ import (
 const (
 	tokenLifetime = 10
 
-	authErrorRate = 0.2
-	doErrorRate   = 0.2
+	authErrorRate = 0.3
+	doErrorRate   = 0.3
 )
 
 func bernoulliTryFail(rate float64) bool {
-	if rand.Float64() < rate {
-		return true
-	}
-	return false
+	return rand.Float64() < rate
 }
 
 func main() {

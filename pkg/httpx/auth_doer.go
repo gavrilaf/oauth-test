@@ -53,6 +53,7 @@ func (d *authDoer) Do(req *http.Request) (*http.Response, error) {
 
 		if shouldRetry && attempt < retryCount {
 			d.metrics.RecordCount("doer-retry-count")
+			d.tokenProvider.ForceRefresh()
 			return doWithRetry(attempt + 1)
 		}
 

@@ -22,7 +22,7 @@ func MakeTokenProvider(authUrl string, metrics Metrics) TokenProvider {
 	return &tokenProvider{
 		authUrl: authUrl,
 		client:  http.DefaultClient,
-		lock:    &sync.RWMutex{},
+		lock:    &sync.Mutex{},
 		metrics: metrics,
 	}
 }
@@ -32,22 +32,21 @@ func MakeTokenProvider(authUrl string, metrics Metrics) TokenProvider {
 type tokenProvider struct {
 	authUrl  string
 	client   *http.Client
-	lock     *sync.RWMutex
+	lock     *sync.Mutex
 	token    string
 	expireAt time.Time
 	lifetime time.Duration
-	metrics Metrics
+	metrics  Metrics
 }
 
 func (s *tokenProvider) GetToken() (string, error) {
-	token, valid := func() (string, bool) {
-		s.lock.RLock()
-		defer s.lock.RUnlock()
-		return s.token, s.isTokenValid()
-	}()
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	valid := s.isTokenValid()
 
 	if valid {
-		return token, nil
+		return s.token, nil
 	}
 
 	fmt.Println("token invalid or expired")
@@ -59,29 +58,22 @@ func (s *tokenProvider) GetToken() (string, error) {
 }
 
 func (s *tokenProvider) IsTokenValid() bool {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
 	return s.isTokenValid()
 }
 
 func (s *tokenProvider) ForceRefresh() error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
 	return s.refreshToken()
 }
 
 var retryLogic = backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3)
 
 func (s *tokenProvider) refreshToken() error {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	fmt.Println("refreshing token")
-	if s.isTokenValid() { // updated in another goroutine
-		fmt.Println("already refreshed")
-		s.metrics.RecordCount("token-already-refreshed")
-
-		return nil
-	}
-
 	update := func() error {
 		token, err := s.readToken()
 		if err != nil {
