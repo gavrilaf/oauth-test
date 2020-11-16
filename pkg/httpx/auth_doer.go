@@ -12,6 +12,7 @@ const (
 	retryCount = 1
 )
 
+//go:generate mockery --name Doer --outpkg httpxmock --output ./httpxmock --dir .
 type Doer interface {
 	Do(*http.Request) (*http.Response, error)
 }
@@ -19,12 +20,14 @@ type Doer interface {
 type authDoer struct {
 	parent        Doer
 	tokenProvider TokenProvider
+	metrics       Metrics
 }
 
-func MakeAuthDoer(parent Doer, provider TokenProvider) Doer {
+func MakeAuthDoer(parent Doer, provider TokenProvider, metrics Metrics) Doer {
 	return &authDoer{
 		parent:        parent,
 		tokenProvider: provider,
+		metrics:       metrics,
 	}
 }
 
@@ -49,7 +52,7 @@ func (d *authDoer) Do(req *http.Request) (*http.Response, error) {
 		}
 
 		if shouldRetry && attempt < retryCount {
-			//d.tokenProvider.
+			d.metrics.RecordCount("doer-retry-count")
 			return doWithRetry(attempt + 1)
 		}
 

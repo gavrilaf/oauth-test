@@ -1,6 +1,8 @@
 package httpx_test
 
 import (
+	"github.com/gavrilaf/oauth-test/pkg/httpx/httpxmock"
+	"github.com/stretchr/testify/mock"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -16,6 +18,9 @@ func testTime(sec int) time.Time {
 }
 
 func TestTokenProvider_GetToken(t *testing.T) {
+	metrics := &httpxmock.Metrics{}
+	metrics.On("RecordCount", mock.Anything)
+
 	t.Run("happy path", func(t *testing.T) {
 		handler := func(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte("{\"token\": \"aaaa\", \"expire\": 300}"))
@@ -24,7 +29,7 @@ func TestTokenProvider_GetToken(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(handler))
 		defer server.Close()
 
-		provider := httpx.MakeTokenProvider(server.URL)
+		provider := httpx.MakeTokenProvider(server.URL, metrics)
 
 		token, err := provider.GetToken()
 		assert.NoError(t, err)
@@ -47,7 +52,7 @@ func TestTokenProvider_GetToken(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(handler))
 		defer server.Close()
 
-		provider := httpx.MakeTokenProvider(server.URL)
+		provider := httpx.MakeTokenProvider(server.URL, metrics)
 
 		token, err := provider.GetToken()
 		assert.NoError(t, err)
@@ -68,7 +73,7 @@ func TestTokenProvider_GetToken(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(handler))
 		defer server.Close()
 
-		provider := httpx.MakeTokenProvider(server.URL)
+		provider := httpx.MakeTokenProvider(server.URL, metrics)
 
 		token, err := provider.GetToken()
 
@@ -100,7 +105,7 @@ func TestTokenProvider_GetToken(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(handler))
 		defer server.Close()
 
-		provider := httpx.MakeTokenProvider(server.URL)
+		provider := httpx.MakeTokenProvider(server.URL, metrics)
 
 		token, err := provider.GetToken()
 		assert.NoError(t, err)

@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -17,13 +16,24 @@ import (
 	"github.com/gavrilaf/oauth-test/pkg/httpx"
 )
 
-var (
-	successCount int64 = 0
-	failedCount  int64 = 0
-)
+type metricsClient struct {
+	m    map[string]int
+	lock *sync.Mutex
+}
+
+func (c *metricsClient) RecordCount(name string) {
+	c.lock.Lock()
+	c.m[name] += 1
+	c.lock.Unlock()
+}
+
+var metrics = &metricsClient{
+	m:    map[string]int{},
+	lock: &sync.Mutex{},
+}
 
 func run(ctx context.Context, id int, timeout time.Duration, provider httpx.TokenProvider) {
-	doer := httpx.MakeAuthDoer(http.DefaultClient, provider)
+	doer := httpx.MakeAuthDoer(http.DefaultClient, provider, metrics)
 
 	for {
 		req, err := http.NewRequest("GET", "http://localhost:7575/do", nil)
@@ -34,10 +44,9 @@ func run(ctx context.Context, id int, timeout time.Duration, provider httpx.Toke
 		resp, err := doer.Do(req)
 		if err != nil {
 			fmt.Printf("%d failed\n", id)
-			atomic.AddInt64(&failedCount, 1)
+			metrics.RecordCount("requests-failed")
 		} else {
-			//fmt.Printf("%d success\n", id)
-			atomic.AddInt64(&successCount, 1)
+			metrics.RecordCount("requests-succeeded")
 			resp.Body.Close()
 		}
 
@@ -54,7 +63,7 @@ func run(ctx context.Context, id int, timeout time.Duration, provider httpx.Toke
 const workers = 5
 
 func main() {
-	provider := httpx.MakeTokenProvider("http://127.0.0.1:7575/auth")
+	provider := httpx.MakeTokenProvider("http://127.0.0.1:7575/auth", metrics)
 
 	ctx, cancelFn := context.WithCancel(context.Background())
 
@@ -89,10 +98,9 @@ func main() {
 	}()
 
 	e.GET("/metrics", func(c echo.Context) error {
-		res := map[string]int64{
-			"workers":       workers,
-			"succeeded_req": successCount,
-			"failed_req":    failedCount,
+		res := map[string]interface{}{
+			"workers": workers,
+			"metrics": metrics.m,
 		}
 
 		return c.JSON(200, res)

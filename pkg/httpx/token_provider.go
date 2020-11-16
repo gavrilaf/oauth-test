@@ -11,19 +11,23 @@ import (
 	"github.com/cenkalti/backoff/v4"
 )
 
+//go:generate mockery --name TokenProvider --outpkg httpxmock --output ./httpxmock --dir .
 type TokenProvider interface {
 	GetToken() (string, error)
 	IsTokenValid() bool
 	ForceRefresh() error
 }
 
-func MakeTokenProvider(authUrl string) TokenProvider {
+func MakeTokenProvider(authUrl string, metrics Metrics) TokenProvider {
 	return &tokenProvider{
 		authUrl: authUrl,
 		client:  http.DefaultClient,
 		lock:    &sync.RWMutex{},
+		metrics: metrics,
 	}
 }
+
+// impl
 
 type tokenProvider struct {
 	authUrl  string
@@ -32,6 +36,7 @@ type tokenProvider struct {
 	token    string
 	expireAt time.Time
 	lifetime time.Duration
+	metrics Metrics
 }
 
 func (s *tokenProvider) GetToken() (string, error) {
@@ -72,6 +77,8 @@ func (s *tokenProvider) refreshToken() error {
 	fmt.Println("refreshing token")
 	if s.isTokenValid() { // updated in another goroutine
 		fmt.Println("already refreshed")
+		s.metrics.RecordCount("token-already-refreshed")
+
 		return nil
 	}
 
@@ -79,6 +86,7 @@ func (s *tokenProvider) refreshToken() error {
 		token, err := s.readToken()
 		if err != nil {
 			fmt.Printf("read token error: %v\n", err)
+			s.metrics.RecordCount("token-read-failed")
 			return err
 		}
 
@@ -94,10 +102,12 @@ func (s *tokenProvider) refreshToken() error {
 		s.token = ""
 		s.lifetime = 0
 		s.expireAt = time.Time{}
+		s.metrics.RecordCount("token-refresh-failed")
 
 		return fmt.Errorf("failed to refresh token, %w", err)
 	}
 
+	s.metrics.RecordCount("token-refreshed")
 	fmt.Println("token refreshed")
 	return nil
 }
