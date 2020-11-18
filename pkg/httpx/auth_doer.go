@@ -20,14 +20,12 @@ type Doer interface {
 type authDoer struct {
 	parent        Doer
 	tokenProvider TokenProvider
-	metrics       Metrics
 }
 
-func MakeAuthDoer(parent Doer, provider TokenProvider, metrics Metrics) Doer {
+func MakeAuthDoer(parent Doer, provider TokenProvider) Doer {
 	return &authDoer{
 		parent:        parent,
 		tokenProvider: provider,
-		metrics:       metrics,
 	}
 }
 
@@ -52,7 +50,6 @@ func (d *authDoer) Do(req *http.Request) (*http.Response, error) {
 		}
 
 		if shouldRetry && attempt < retryCount {
-			d.metrics.RecordCount("doer-retry-count")
 			d.tokenProvider.ForceRefresh()
 			return doWithRetry(attempt + 1)
 		}

@@ -11,6 +11,18 @@ import (
 	"github.com/cenkalti/backoff/v4"
 )
 
+type TokenEvent int
+
+const (
+	TokenEventNeedRefresh TokenEvent = iota
+	TokenEventRefreshed
+	TokenEventForceRefresh
+	TokenEventReadError
+	TokenEventRefreshFailed
+)
+
+type TokenMetricsDelegate func(event TokenEvent, err error)
+
 //go:generate mockery --name TokenProvider --outpkg httpxmock --output ./httpxmock --dir .
 type TokenProvider interface {
 	GetToken() (string, error)
@@ -21,11 +33,10 @@ type TokenProvider interface {
 	StopAutoRefresh()
 }
 
-func MakeTokenProvider(authUrl string, metrics Metrics) TokenProvider {
+func MakeTokenProvider(authUrl string, metrics TokenMetricsDelegate) TokenProvider {
 	return &tokenProvider{
 		authUrl: authUrl,
 		client:  http.DefaultClient,
-		lock:    &sync.Mutex{},
 		closed:  make(chan struct{}),
 		metrics: metrics,
 	}
@@ -36,12 +47,12 @@ func MakeTokenProvider(authUrl string, metrics Metrics) TokenProvider {
 type tokenProvider struct {
 	authUrl  string
 	client   *http.Client
-	lock     *sync.Mutex
+	lock     sync.Mutex
 	token    string
 	expireAt time.Time
 	lifetime time.Duration
 	closed   chan struct{}
-	metrics  Metrics
+	metrics  TokenMetricsDelegate
 }
 
 func (p *tokenProvider) GetToken() (string, error) {
@@ -54,7 +65,10 @@ func (p *tokenProvider) GetToken() (string, error) {
 		return p.token, nil
 	}
 
-	fmt.Println("token invalid or expired")
+	if p.metrics != nil {
+		p.metrics(TokenEventNeedRefresh, nil)
+	}
+
 	if err := p.refreshToken(); err != nil {
 		return "", err
 	}
@@ -73,7 +87,12 @@ func (p *tokenProvider) ForceRefresh() error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	return p.refreshToken()
+	err := p.refreshToken()
+	if p.metrics != nil {
+		p.metrics(TokenEventForceRefresh, err)
+	}
+
+	return err
 }
 
 const (
@@ -130,8 +149,9 @@ func (p *tokenProvider) refreshToken() error {
 	update := func() error {
 		token, err := p.readToken()
 		if err != nil {
-			fmt.Printf("read token error: %v\n", err)
-			p.metrics.RecordCount("token-read-failed")
+			if p.metrics != nil {
+				p.metrics(TokenEventReadError, err)
+			}
 			return err
 		}
 
@@ -147,13 +167,17 @@ func (p *tokenProvider) refreshToken() error {
 		p.token = ""
 		p.lifetime = 0
 		p.expireAt = time.Time{}
-		p.metrics.RecordCount("token-refresh-failed")
+		if p.metrics != nil {
+			p.metrics(TokenEventRefreshFailed, err)
+		}
 
 		return fmt.Errorf("failed to refresh token, %w", err)
 	}
 
-	p.metrics.RecordCount("token-refreshed")
-	fmt.Println("token refreshed")
+	if p.metrics != nil {
+		p.metrics(TokenEventRefreshed, nil)
+	}
+
 	return nil
 }
 
@@ -182,7 +206,7 @@ func (p *tokenProvider) readToken() (Token, error) {
 	}
 
 	if resp.StatusCode != 200 {
-		return Token{}, fmt.Errorf("token request failed, %d, %p", resp.StatusCode, string(body))
+		return Token{}, fmt.Errorf("token request failed, %d, %s", resp.StatusCode, string(body))
 	}
 
 	var token Token

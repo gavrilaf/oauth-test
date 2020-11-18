@@ -16,24 +16,41 @@ import (
 	"github.com/gavrilaf/oauth-test/pkg/httpx"
 )
 
-type metricsClient struct {
+var metrics = struct {
 	m    map[string]int
-	lock *sync.Mutex
+	lock sync.Mutex
+}{
+	map[string]int{},
+	sync.Mutex{},
 }
 
-func (c *metricsClient) RecordCount(name string) {
-	c.lock.Lock()
-	c.m[name] += 1
-	c.lock.Unlock()
+func recordMetric(key string) {
+	metrics.lock.Lock()
+	metrics.m[key] += 1
+	metrics.lock.Unlock()
 }
 
-var metrics = &metricsClient{
-	m:    map[string]int{},
-	lock: &sync.Mutex{},
+func tokenMetricsDelegate(event httpx.TokenEvent, err error) {
+	if err != nil {
+		fmt.Printf("Token error: %v\n", err)
+	}
+
+	switch event {
+	case httpx.TokenEventNeedRefresh:
+		recordMetric("token-need-refresh")
+	case httpx.TokenEventForceRefresh:
+		recordMetric("token-force-refresh")
+	case httpx.TokenEventReadError:
+		recordMetric("token-read-error")
+	case httpx.TokenEventRefreshFailed:
+		recordMetric("token-refresh-failed")
+	case httpx.TokenEventRefreshed:
+		recordMetric("token-refreshed")
+	}
 }
 
 func run(ctx context.Context, id int, timeout time.Duration, provider httpx.TokenProvider) {
-	doer := httpx.MakeAuthDoer(http.DefaultClient, provider, metrics)
+	doer := httpx.MakeAuthDoer(http.DefaultClient, provider)
 
 	for {
 		req, err := http.NewRequest("GET", "http://localhost:7575/do", nil)
@@ -44,9 +61,9 @@ func run(ctx context.Context, id int, timeout time.Duration, provider httpx.Toke
 		resp, err := doer.Do(req)
 		if err != nil {
 			fmt.Printf("%d failed\n", id)
-			metrics.RecordCount("requests-failed")
+			recordMetric("requests-failed")
 		} else {
-			metrics.RecordCount("requests-succeeded")
+			recordMetric("requests-succeeded")
 			resp.Body.Close()
 		}
 
@@ -63,11 +80,13 @@ func run(ctx context.Context, id int, timeout time.Duration, provider httpx.Toke
 const workers = 5
 
 func main() {
-	provider := httpx.MakeTokenProvider("http://127.0.0.1:7575/auth", metrics)
+	provider := httpx.MakeTokenProvider("http://127.0.0.1:7575/auth", tokenMetricsDelegate)
 
 	ctx, cancelFn := context.WithCancel(context.Background())
 
 	wg := sync.WaitGroup{}
+
+	provider.StartAutoRefresh()
 
 	rand.Seed(time.Now().UnixNano())
 
@@ -93,6 +112,8 @@ func main() {
 		} else {
 			fmt.Printf("echo server shutdowned\n")
 		}
+
+		provider.StopAutoRefresh()
 
 		cancelFn()
 	}()
