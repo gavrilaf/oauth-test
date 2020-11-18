@@ -16,6 +16,9 @@ type TokenProvider interface {
 	GetToken() (string, error)
 	IsTokenValid() bool
 	ForceRefresh() error
+
+	StartAutoRefresh()
+	StopAutoRefresh()
 }
 
 func MakeTokenProvider(authUrl string, metrics Metrics) TokenProvider {
@@ -23,6 +26,7 @@ func MakeTokenProvider(authUrl string, metrics Metrics) TokenProvider {
 		authUrl: authUrl,
 		client:  http.DefaultClient,
 		lock:    &sync.Mutex{},
+		closed:  make(chan struct{}),
 		metrics: metrics,
 	}
 }
@@ -36,88 +40,137 @@ type tokenProvider struct {
 	token    string
 	expireAt time.Time
 	lifetime time.Duration
+	closed   chan struct{}
 	metrics  Metrics
 }
 
-func (s *tokenProvider) GetToken() (string, error) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+func (p *tokenProvider) GetToken() (string, error) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
 
-	valid := s.isTokenValid()
+	valid := p.isTokenValid()
 
 	if valid {
-		return s.token, nil
+		return p.token, nil
 	}
 
 	fmt.Println("token invalid or expired")
-	if err := s.refreshToken(); err != nil {
+	if err := p.refreshToken(); err != nil {
 		return "", err
 	}
 
-	return s.token, nil
+	return p.token, nil
 }
 
-func (s *tokenProvider) IsTokenValid() bool {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+func (p *tokenProvider) IsTokenValid() bool {
+	p.lock.Lock()
+	defer p.lock.Unlock()
 
-	return s.isTokenValid()
+	return p.isTokenValid()
 }
 
-func (s *tokenProvider) ForceRefresh() error {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+func (p *tokenProvider) ForceRefresh() error {
+	p.lock.Lock()
+	defer p.lock.Unlock()
 
-	return s.refreshToken()
+	return p.refreshToken()
 }
+
+const (
+	refreshBiasTime   = 2 * time.Second
+	defaultWakeupTime = 10 * time.Second
+)
+
+func (p *tokenProvider) StartAutoRefresh() {
+	// returns: ('should refresh token', 'next wake up time')
+	checkToken := func() (bool, time.Duration) {
+		if !p.isTokenValid() {
+			return true, defaultWakeupTime
+		}
+
+		estimatedExpiration := p.expireAt.Add(p.lifetime - refreshBiasTime)
+		notExpired := estimatedExpiration.Before(TimeNow())
+		if notExpired {
+			return false, TimeNow().Sub(estimatedExpiration)
+		} else {
+			return true, p.lifetime - refreshBiasTime
+		}
+	}
+
+	go func() {
+		for {
+			p.lock.Lock()
+
+			shouldRefresh, nextWakeUp := checkToken()
+			if shouldRefresh {
+				_ = p.refreshToken()
+			}
+
+			p.lock.Unlock()
+
+			select {
+			case <-time.After(nextWakeUp):
+				break
+			case <-p.closed:
+				return
+			}
+		}
+	}()
+}
+
+func (p *tokenProvider) StopAutoRefresh() {
+	close(p.closed)
+}
+
+// private
 
 var retryLogic = backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3)
 
-func (s *tokenProvider) refreshToken() error {
+func (p *tokenProvider) refreshToken() error {
 	update := func() error {
-		token, err := s.readToken()
+		token, err := p.readToken()
 		if err != nil {
 			fmt.Printf("read token error: %v\n", err)
-			s.metrics.RecordCount("token-read-failed")
+			p.metrics.RecordCount("token-read-failed")
 			return err
 		}
 
-		s.token = token.Token
-		s.lifetime = time.Duration(token.Expire)
-		s.expireAt = TimeNow().Add(time.Duration(token.Expire) * time.Second)
+		p.token = token.Token
+		p.lifetime = time.Duration(token.Expire)
+		p.expireAt = TimeNow().Add(time.Duration(token.Expire) * time.Second)
 
 		return nil
 	}
 
 	err := backoff.Retry(update, retryLogic)
 	if err != nil {
-		s.token = ""
-		s.lifetime = 0
-		s.expireAt = time.Time{}
-		s.metrics.RecordCount("token-refresh-failed")
+		p.token = ""
+		p.lifetime = 0
+		p.expireAt = time.Time{}
+		p.metrics.RecordCount("token-refresh-failed")
 
 		return fmt.Errorf("failed to refresh token, %w", err)
 	}
 
-	s.metrics.RecordCount("token-refreshed")
+	p.metrics.RecordCount("token-refreshed")
 	fmt.Println("token refreshed")
 	return nil
 }
 
-func (s *tokenProvider) isTokenValid() bool {
-	return s.token != "" && !s.expired()
+func (p *tokenProvider) isTokenValid() bool {
+	return p.token != "" && !p.expired()
 }
 
-func (s *tokenProvider) expired() bool {
-	if s.expireAt.IsZero() {
+func (p *tokenProvider) expired() bool {
+	if p.expireAt.IsZero() {
 		return false
 	}
 
-	return s.expireAt.Add(-s.lifetime).Before(TimeNow())
+	return p.expireAt.Add(-p.lifetime).Before(TimeNow())
 }
 
-func (s *tokenProvider) readToken() (Token, error) {
-	resp, err := s.client.Get(s.authUrl)
+func (p *tokenProvider) readToken() (Token, error) {
+	resp, err := p.client.Get(p.authUrl)
 	if err != nil {
 		return Token{}, fmt.Errorf("token request error, %w", err)
 	}
@@ -129,7 +182,7 @@ func (s *tokenProvider) readToken() (Token, error) {
 	}
 
 	if resp.StatusCode != 200 {
-		return Token{}, fmt.Errorf("token request failed, %d, %s", resp.StatusCode, string(body))
+		return Token{}, fmt.Errorf("token request failed, %d, %p", resp.StatusCode, string(body))
 	}
 
 	var token Token

@@ -17,7 +17,7 @@ const (
 	tokenLifetime = 10
 
 	authErrorRate = 0.3
-	doErrorRate   = 0.3
+	doErrorRate   = 0.0
 )
 
 func bernoulliTryFail(rate float64) bool {
