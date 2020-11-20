@@ -1,4 +1,4 @@
-package httpx_test
+package httpx
 
 import (
 	"net/http"
@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/gavrilaf/oauth-test/pkg/httpx"
 )
 
 func testTime(sec int) time.Time {
@@ -24,7 +22,7 @@ func TestTokenProvider_GetToken(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(handler))
 		defer server.Close()
 
-		provider := httpx.MakeTokenProvider(server.URL, nil)
+		provider := MakeTokenProvider(server.URL, nil)
 
 		token, err := provider.GetToken()
 		assert.NoError(t, err)
@@ -47,7 +45,7 @@ func TestTokenProvider_GetToken(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(handler))
 		defer server.Close()
 
-		provider := httpx.MakeTokenProvider(server.URL, nil)
+		provider := MakeTokenProvider(server.URL, nil)
 
 		token, err := provider.GetToken()
 		assert.NoError(t, err)
@@ -68,7 +66,7 @@ func TestTokenProvider_GetToken(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(handler))
 		defer server.Close()
 
-		provider := httpx.MakeTokenProvider(server.URL, nil)
+		provider := MakeTokenProvider(server.URL, nil)
 
 		token, err := provider.GetToken()
 
@@ -83,7 +81,7 @@ func TestTokenProvider_GetToken(t *testing.T) {
 	t.Run("check token expiration", func(t *testing.T) {
 		secondsNow := 1
 
-		httpx.TimeNow = func() time.Time {
+		timeNow = func() time.Time {
 			return testTime(secondsNow)
 		}
 
@@ -100,7 +98,7 @@ func TestTokenProvider_GetToken(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(handler))
 		defer server.Close()
 
-		provider := httpx.MakeTokenProvider(server.URL, nil)
+		provider := MakeTokenProvider(server.URL, nil)
 
 		token, err := provider.GetToken()
 		assert.NoError(t, err)
@@ -122,6 +120,59 @@ func TestTokenProvider_GetToken(t *testing.T) {
 
 		assert.Equal(t, 2, callsCounter)
 
-		httpx.TimeNow = time.Now
+		timeNow = time.Now
+	})
+}
+
+func TestTokenProvider_IsTokenValid(t *testing.T) {
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("{\"token\": \"aaaa\", \"expire\": 10}"))
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(handler))
+	defer server.Close()
+
+	secondsNow := 1
+	timeNow = func() time.Time {
+		return testTime(secondsNow)
+	}
+
+	provider := MakeTokenProvider(server.URL, nil)
+
+	t.Run("token is invalid from the beginning", func(t *testing.T) {
+		assert.False(t, provider.IsTokenValid())
+	})
+
+	t.Run("token is valid when refreshed", func(t *testing.T) {
+		_, err := provider.GetToken()
+		assert.NoError(t, err)
+		assert.True(t, provider.IsTokenValid())
+	})
+
+	t.Run("token is invalid when expired", func(t *testing.T) {
+		secondsNow += 11
+		assert.False(t, provider.IsTokenValid())
+	})
+
+	timeNow = time.Now
+}
+
+func TestTokenProvider_ForceRefresh(t *testing.T) {
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("{\"token\": \"aaaa\", \"expire\": 10}"))
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(handler))
+	defer server.Close()
+
+	provider := MakeTokenProvider(server.URL, nil)
+
+	t.Run("token is valid after force refseh", func(t *testing.T) {
+		assert.False(t, provider.IsTokenValid())
+
+		err := provider.ForceRefresh()
+		assert.NoError(t, err)
+
+		assert.True(t, provider.IsTokenValid())
 	})
 }

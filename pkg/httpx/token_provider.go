@@ -23,6 +23,14 @@ const (
 
 type TokenMetricsDelegate func(event TokenEvent, err error)
 
+var timeNow = time.Now
+
+type Token struct {
+	Expire int    `json:"expire"`
+	Token  string `json:"token"`
+}
+
+
 //go:generate mockery --name TokenProvider --outpkg httpxmock --output ./httpxmock --dir .
 type TokenProvider interface {
 	GetToken() (string, error)
@@ -108,9 +116,9 @@ func (p *tokenProvider) StartAutoRefresh() {
 		}
 
 		estimatedExpiration := p.expireAt.Add(p.lifetime - refreshBiasTime)
-		notExpired := estimatedExpiration.Before(TimeNow())
+		notExpired := estimatedExpiration.Before(timeNow())
 		if notExpired {
-			return false, TimeNow().Sub(estimatedExpiration)
+			return false, timeNow().Sub(estimatedExpiration)
 		} else {
 			return true, p.lifetime - refreshBiasTime
 		}
@@ -157,7 +165,7 @@ func (p *tokenProvider) refreshToken() error {
 
 		p.token = token.Token
 		p.lifetime = time.Duration(token.Expire)
-		p.expireAt = TimeNow().Add(time.Duration(token.Expire) * time.Second)
+		p.expireAt = timeNow().Add(time.Duration(token.Expire) * time.Second)
 
 		return nil
 	}
@@ -190,7 +198,7 @@ func (p *tokenProvider) expired() bool {
 		return false
 	}
 
-	return p.expireAt.Add(-p.lifetime).Before(TimeNow())
+	return p.expireAt.Add(-p.lifetime).Before(timeNow())
 }
 
 func (p *tokenProvider) readToken() (Token, error) {
